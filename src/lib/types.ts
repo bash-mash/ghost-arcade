@@ -787,7 +787,7 @@ export interface MediaSource {
   playbackSyncBeats?: number | null; // If set, fit full clip/trim span to this many beats
   trimStart?: number; // 0-1 normalized start point (default 0)
   trimEnd?: number; // 0-1 normalized end point (default 1)
-  audioEnabled?: boolean; // Play the video's soundtrack from the editor window (default false = muted)
+  audioEnabled?: boolean; // Play the video's soundtrack from the editor window (default true; false = muted)
   volume?: number; // 0-1 soundtrack volume when audioEnabled (default 1)
   _lastFrameTime?: number; // Internal: timestamp for manual frame stepping
   // Timelapse mode properties

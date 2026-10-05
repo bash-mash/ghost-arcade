@@ -1924,7 +1924,7 @@
           {@const vRate = vSrc.playbackRate ?? 1.0}
           {@const vTrimS = vSrc.trimStart ?? 0}
           {@const vTrimE = vSrc.trimEnd ?? 1}
-          {@const vAudioOn = vSrc.audioEnabled === true}
+          {@const vAudioOn = vSrc.audioEnabled !== false}
           {@const vVolume = vSrc.volume ?? 1}
 
           <div class="video-controls-panel">
@@ -1990,7 +1990,7 @@
               </select>
             </div>
 
-            <!-- Audio row: videos are muted unless sound is turned on per layer -->
+            <!-- Audio row: video sound plays unless muted per layer -->
             <div class="vt-audio">
               <button
                 class="vt-btn"

@@ -3474,14 +3474,14 @@
 
         const video = layer.source.videoElement;
 
-        // Soundtrack: every video element is created muted; unmute only for
-        // visible, audio-enabled layers in the editor window.
+        // Soundtrack: every video element is created muted; unmute here for
+        // visible layers in the editor window unless the layer is muted.
         if (
           video &&
           playVideoAudio &&
           !isOutputMode &&
           !isOsrMode &&
-          layer.source.audioEnabled &&
+          layer.source.audioEnabled !== false &&
           layer.visible !== false &&
           (layer.opacity ?? 1) > 0
         ) {

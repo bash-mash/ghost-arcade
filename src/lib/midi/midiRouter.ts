@@ -255,7 +255,7 @@ class MidiRouter {
         const sourcePosition = trimStart + normalized * (trimEnd - trimStart);
         if (Number.isFinite(video.duration)) video.currentTime = video.duration * sourcePosition;
       } else if (property === 'audio' && value > 0) {
-        project.setLayerSource(layer.id, { ...source, audioEnabled: !source.audioEnabled });
+        project.setLayerSource(layer.id, { ...source, audioEnabled: source.audioEnabled === false });
       } else if (property === 'volume') {
         const volume = Math.max(0, Math.min(1, value));
         project.setLayerSource(layer.id, { ...source, volume, audioEnabled: volume > 0 ? true : source.audioEnabled });
