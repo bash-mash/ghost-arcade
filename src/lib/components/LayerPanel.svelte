@@ -289,6 +289,18 @@
     project.updateLayer(layerId, {});
   }
 
+  // Canvas applies these to the video element each frame (editor window only).
+  function setVideoAudioEnabled(layerId: string, source: MediaSource, enabled: boolean) {
+    source.audioEnabled = enabled;
+    project.updateLayer(layerId, {});
+  }
+
+  function setVideoVolume(layerId: string, source: MediaSource, volume: number) {
+    source.volume = Math.max(0, Math.min(1, volume));
+    if (source.volume > 0) source.audioEnabled = true;
+    project.updateLayer(layerId, {});
+  }
+
   function handleTimelineMouseDown(e: MouseEvent, layerId: string, source: MediaSource) {
     if (!timelineEl || !source.videoElement) return;
     e.stopPropagation();
@@ -1912,6 +1924,8 @@
           {@const vRate = vSrc.playbackRate ?? 1.0}
           {@const vTrimS = vSrc.trimStart ?? 0}
           {@const vTrimE = vSrc.trimEnd ?? 1}
+          {@const vAudioOn = vSrc.audioEnabled === true}
+          {@const vVolume = vSrc.volume ?? 1}
 
           <div class="video-controls-panel">
             <!-- Transport row -->
@@ -1974,6 +1988,49 @@
                 <option value="2">2x</option>
                 <option value="4">4x</option>
               </select>
+            </div>
+
+            <!-- Audio row: videos are muted unless sound is turned on per layer -->
+            <div class="vt-audio">
+              <button
+                class="vt-btn"
+                class:vt-audio-on={vAudioOn}
+                data-midi-path="map:media:audio"
+                data-midi-label="Media Sound On / Off"
+                data-midi-min="0"
+                data-midi-max="1"
+                data-midi-mode="toggle"
+                onclick={() => setVideoAudioEnabled(layer.id, vSrc, !vAudioOn)}
+                title={vAudioOn ? 'Mute video sound' : 'Play video sound'}
+                aria-pressed={vAudioOn}
+              >
+                {#if vAudioOn}
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                    <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5" fill="currentColor"/><path d="M15.54 8.46a5 5 0 0 1 0 7.07"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14"/>
+                  </svg>
+                {:else}
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                    <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5" fill="currentColor"/><line x1="23" y1="9" x2="17" y2="15"/><line x1="17" y1="9" x2="23" y2="15"/>
+                  </svg>
+                {/if}
+              </button>
+              <input
+                type="range"
+                class="vt-volume"
+                class:dimmed={!vAudioOn}
+                min="0"
+                max="1"
+                step="0.01"
+                value={vVolume}
+                data-midi-path="map:media:volume"
+                data-midi-label="Media Volume"
+                data-midi-min="0"
+                data-midi-max="1"
+                data-midi-step="0.01"
+                oninput={(e) => setVideoVolume(layer.id, vSrc, parseFloat((e.target as HTMLInputElement).value))}
+                aria-label="Video volume"
+              />
+              <span class="vt-volume-value">{vAudioOn ? `${Math.round(vVolume * 100)}%` : 'Muted'}</span>
             </div>
 
             <!-- Timeline bar -->
@@ -3954,6 +4011,32 @@
     flex-shrink: 0;
   }
   .vt-speed:hover { border-color: rgba(255, 255, 255, 0.25); }
+
+  .vt-audio {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin-bottom: 8px;
+  }
+  .vt-btn.vt-audio-on {
+    background: rgba(187, 134, 252, 0.25);
+    color: #BB86FC;
+  }
+  .vt-volume {
+    flex: 1;
+    min-width: 0;
+    accent-color: #BB86FC;
+    cursor: pointer;
+  }
+  .vt-volume.dimmed { opacity: 0.4; }
+  .vt-volume-value {
+    font-size: 12px;
+    color: var(--text-muted, #888);
+    font-family: var(--ga-font-mono, 'IBM Plex Mono', ui-monospace, monospace);
+    min-width: 42px;
+    text-align: right;
+    flex-shrink: 0;
+  }
 
   /* Timeline track */
   .vt-timeline {

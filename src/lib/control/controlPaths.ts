@@ -22,6 +22,8 @@ export const CONTROL_PATH_EXAMPLES: ControlPathExample[] = [
   { path: 'map:layer:opacity', label: 'Selected mapping layer opacity' },
   { path: 'map:media:play', label: 'Selected media play / pause' },
   { path: 'map:media:restart', label: 'Selected media restart' },
+  { path: 'map:media:audio', label: 'Selected media sound on / off' },
+  { path: 'map:media:volume', label: 'Selected media volume' },
 ];
 
 /** Accept old documentation/user syntax while keeping one router contract. */
@@ -65,9 +67,9 @@ export function validateControlPath(path: string): ControlPathValidation {
         : { valid: false, normalized, reason: 'Mapping preset paths use map:preset:<zero-based index>.' };
     }
     if (target === 'media') {
-      return ['play', 'restart', 'position'].includes(parts[2] ?? '')
+      return ['play', 'restart', 'position', 'audio', 'volume'].includes(parts[2] ?? '')
         ? { valid: true, normalized, reason: null }
-        : { valid: false, normalized, reason: 'Media actions are play, restart, or position.' };
+        : { valid: false, normalized, reason: 'Media actions are play, restart, position, audio, or volume.' };
     }
     if (['layer', 'effect', 'gpu', 'shader', 'plugin', 'splat', 'model3d', 'stage-effect'].includes(target ?? '')) {
       return parts.length >= 3

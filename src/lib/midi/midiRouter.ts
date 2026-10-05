@@ -229,7 +229,7 @@ class MidiRouter {
     const layer = get(selectedLayer);
     if (!layer) return;
 
-    // Mapping media transport: map:media:play|restart|position
+    // Mapping media transport: map:media:play|restart|position|audio|volume
     // These actions target the selected layer's live media object so they
     // work outside VJ mode as well as from OSC/MIDI learn.
     if (contentType === 'media') {
@@ -254,6 +254,11 @@ class MidiRouter {
         const normalized = Math.max(0, Math.min(1, value));
         const sourcePosition = trimStart + normalized * (trimEnd - trimStart);
         if (Number.isFinite(video.duration)) video.currentTime = video.duration * sourcePosition;
+      } else if (property === 'audio' && value > 0) {
+        project.setLayerSource(layer.id, { ...source, audioEnabled: !source.audioEnabled });
+      } else if (property === 'volume') {
+        const volume = Math.max(0, Math.min(1, value));
+        project.setLayerSource(layer.id, { ...source, volume, audioEnabled: volume > 0 ? true : source.audioEnabled });
       }
       return;
     }

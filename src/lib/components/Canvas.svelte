@@ -154,6 +154,15 @@
   export let stage3DOutput = false;
   let stage3DRenderer: Stage3DRenderer | null = null;
 
+  /** When true, media layers with `source.audioEnabled` play their video
+   *  soundtrack. Only the editor's Canvas sets this — output, slice, Spout
+   *  and simulator windows run their own copies of each video element, and
+   *  unmuting those too would play every soundtrack several times over. */
+  export let playVideoAudio = false;
+  // Video elements this Canvas has unmuted; re-muted once no visible,
+  // audio-enabled layer uses them (layer hidden, deleted, or audio off).
+  let audibleVideos = new Set<HTMLVideoElement>();
+
   // Spout output state
   const isTauri = isDesktopApp || (typeof window !== 'undefined' && !!window.__ELECTRON__); // Backwards compat alias — works on both Tauri and Electron
   const isElectron = typeof window !== 'undefined' && !!(window as any).__ELECTRON__;
@@ -2976,6 +2985,8 @@
 
   onDestroy(() => {
     cancelAnimationFrame(animationId);
+    for (const v of audibleVideos) v.muted = true;
+    audibleVideos.clear();
     if (canvas) stopWLEDSenders(canvas);
     engine?.dispose();
 
@@ -3259,6 +3270,7 @@
   function updateTexturesSync(layerList: Layer[], cleanupStale: boolean = true) {
     // Track which layers are currently active
     const currentLayerIds = new Set<string>();
+    const nextAudibleVideos = new Set<HTMLVideoElement>();
 
     for (const layer of layerList) {
       currentLayerIds.add(layer.id);
@@ -3461,6 +3473,24 @@
         }
 
         const video = layer.source.videoElement;
+
+        // Soundtrack: every video element is created muted; unmute only for
+        // visible, audio-enabled layers in the editor window.
+        if (
+          video &&
+          playVideoAudio &&
+          !isOutputMode &&
+          !isOsrMode &&
+          layer.source.audioEnabled &&
+          layer.visible !== false &&
+          (layer.opacity ?? 1) > 0
+        ) {
+          const volume = Math.max(0, Math.min(1, layer.source.volume ?? 1));
+          if (video.muted) video.muted = false;
+          if (Math.abs(video.volume - volume) > 0.001) video.volume = volume;
+          nextAudibleVideos.add(video);
+        }
+
         if (video && isFinite(video.duration) && video.duration > 0) {
           const source = layer.source;
           const mode = source.playbackMode || 'loop';
@@ -3554,7 +3584,14 @@
     // pass) — otherwise we'd dispose the upstream VJ layer's resources every
     // frame, forcing a fresh RT allocation each frame and leaving the Screen
     // layers sampling a never-rendered texture.
-    if (!cleanupStale) return;
+    if (!cleanupStale) {
+      for (const v of nextAudibleVideos) audibleVideos.add(v);
+      return;
+    }
+    for (const v of audibleVideos) {
+      if (!nextAudibleVideos.has(v)) v.muted = true;
+    }
+    audibleVideos = nextAudibleVideos;
     for (const [layerId, src] of activeLayerSources.entries()) {
       if (!currentLayerIds.has(layerId)) {
         cleanupLayerShader(layerId, src);

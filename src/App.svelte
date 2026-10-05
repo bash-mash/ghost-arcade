@@ -5874,10 +5874,10 @@
           See docs/WEBGPU_MIGRATION.md for the full roadmap.
         -->
         {#if $settings.experimental?.editorWebGPU && !showStage3D}
-          <Canvas bind:this={canvasComponent} bridgeMode={true} stage3DOutput={showStage3D} />
+          <Canvas bind:this={canvasComponent} bridgeMode={true} stage3DOutput={showStage3D} playVideoAudio={true} />
           <WebGPUCanvas bind:this={webgpuBridgeComponent} />
         {:else}
-          <Canvas bind:this={canvasComponent} stage3DOutput={showStage3D} />
+          <Canvas bind:this={canvasComponent} stage3DOutput={showStage3D} playVideoAudio={true} />
         {/if}
         <!-- Grid overlay — mounted at App.svelte level (sibling to
              Canvas + WebGPUCanvas) so it stays visible regardless of
