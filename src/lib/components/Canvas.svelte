@@ -810,7 +810,7 @@
         const textureCacheKey =
           isAIGenerated || isSynthVision
             ? layer.source.id
-            : isVJVideoLayer
+            : isVJVideoLayer || layer.source.type === 'video'
               ? `${layer.id}:${layer.source.src}`
               : layer.source.src;
         const isShader = layer.source.type === 'shader';
@@ -2987,6 +2987,8 @@
     cancelAnimationFrame(animationId);
     for (const v of audibleVideos) v.muted = true;
     audibleVideos.clear();
+    for (const v of dedicatedVideos.values()) releaseVideoElement(v);
+    dedicatedVideos.clear();
     if (canvas) stopWLEDSenders(canvas);
     engine?.dispose();
 
@@ -3267,10 +3269,54 @@
     texture.needsUpdate = true;
   }
 
+  // layerId -> <video> element Canvas created for a layer whose clip was
+  // already playing on another layer's element.
+  const dedicatedVideos = new Map<string, HTMLVideoElement>();
+
+  function releaseVideoElement(v: HTMLVideoElement) {
+    try {
+      v.pause();
+      v.removeAttribute('src');
+      v.load();
+    } catch { /* ignore */ }
+  }
+
+  /** Applying the same library clip to several layers (or duplicating a
+   *  layer) hands them all the library item's single <video> element, so
+   *  pausing or muting one layer hit all of them. The first layer keeps
+   *  the shared element; every other layer gets its own copy. */
+  function ensureOwnVideoElement(layer: Layer, claimed: Map<HTMLVideoElement, string>) {
+    const source = layer.source!;
+    const video = source.videoElement;
+    if (!video) return;
+    const owner = claimed.get(video);
+    if (!owner || owner === layer.id) {
+      claimed.set(video, layer.id);
+      return;
+    }
+    let own = dedicatedVideos.get(layer.id);
+    if (!own || own.dataset.gaSrc !== source.src) {
+      if (own) releaseVideoElement(own);
+      own = document.createElement('video');
+      own.crossOrigin = video.crossOrigin;
+      own.loop = false;
+      own.muted = true;
+      own.playsInline = true;
+      own.preload = 'auto';
+      own.dataset.gaSrc = source.src;
+      own.src = video.currentSrc || video.src || source.src;
+      try { own.currentTime = video.currentTime; } catch { /* ignore */ }
+      dedicatedVideos.set(layer.id, own);
+    }
+    source.videoElement = own;
+    claimed.set(own, layer.id);
+  }
+
   function updateTexturesSync(layerList: Layer[], cleanupStale: boolean = true) {
     // Track which layers are currently active
     const currentLayerIds = new Set<string>();
     const nextAudibleVideos = new Set<HTMLVideoElement>();
+    const claimedVideos = new Map<HTMLVideoElement, string>();
 
     for (const layer of layerList) {
       currentLayerIds.add(layer.id);
@@ -3320,10 +3366,16 @@
       // sampled. Namespacing by layer.id + src keeps them isolated.
       const isVJVideoLayer =
         layer.source.type === 'video' && typeof layer.id === 'string' && layer.id.startsWith('vj-layer-');
+      // Mapping video layers also key per layer: each one owns its own
+      // <video> element (see ensureOwnVideoElement) so play/pause, mute
+      // and volume stay independent when two layers show the same clip.
+      if (layer.source.type === 'video' && !isVJVideoLayer) {
+        ensureOwnVideoElement(layer, claimedVideos);
+      }
       const textureCacheKey =
         isAIGenerated || isSynthVision
           ? layer.source.id
-          : isVJVideoLayer
+          : isVJVideoLayer || layer.source.type === 'video'
             ? `${layer.id}:${layer.source.src}`
             : layer.source.src;
       // Layer-specific cache key for shader instances (which may have per-layer state)
@@ -3379,6 +3431,17 @@
           textureCache.delete(lookupKey);
           loadingTextures.delete(lookupKey);
           // Fall through to create new texture below
+        } else if (
+          layer.source.type === 'video' &&
+          !isVJVideoLayer &&
+          layer.source.videoElement &&
+          (cachedTexture as THREE.VideoTexture).image !== layer.source.videoElement
+        ) {
+          // The layer was handed its own <video> element; the cached texture
+          // still wraps the old (shared) one. Reload against the new element.
+          cachedTexture.dispose();
+          textureCache.delete(lookupKey);
+          loadingTextures.delete(lookupKey);
         } else {
           // Always assign - the source object reference may have changed due to store updates
           layer.source.texture = cachedTexture;
@@ -3592,6 +3655,12 @@
       if (!nextAudibleVideos.has(v)) v.muted = true;
     }
     audibleVideos = nextAudibleVideos;
+    for (const [layerId, v] of dedicatedVideos) {
+      if (!currentLayerIds.has(layerId)) {
+        releaseVideoElement(v);
+        dedicatedVideos.delete(layerId);
+      }
+    }
     for (const [layerId, src] of activeLayerSources.entries()) {
       if (!currentLayerIds.has(layerId)) {
         cleanupLayerShader(layerId, src);
@@ -4631,7 +4700,7 @@
               break;
             }
             // Try texture cache (images, videos)
-            const cachedTex = textureCache.get(texKey);
+            const cachedTex = textureCache.get(texKey) ?? textureCache.get(cacheKey);
             if (cachedTex) {
               sharedTexture = cachedTex;
               break;

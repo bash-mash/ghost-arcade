@@ -1919,7 +1919,6 @@
         <!-- Video Controls (only for video sources) -->
         {#if layer.type === 'media' && layer.source?.type === 'video' && layer.source.videoElement}
           {@const vSrc = layer.source}
-          {@const vEl = layer.source.videoElement}
           {@const vMode = vSrc.playbackMode || 'loop'}
           {@const vRate = vSrc.playbackRate ?? 1.0}
           {@const vTrimS = vSrc.trimStart ?? 0}
@@ -1939,6 +1938,10 @@
                 data-midi-mode="toggle"
                 onclick={() => {
                   const playing = vSrc.isPlaying !== false;
+                  // Read the element at click time: Canvas may have given this
+                  // layer its own <video> since the panel last rendered.
+                  const vEl = vSrc.videoElement;
+                  if (!vEl) return;
                   if (playing) {
                     vEl.pause();
                     vSrc.isPlaying = false;
@@ -1965,6 +1968,8 @@
                 data-midi-max="1"
                 data-midi-mode="toggle"
                 onclick={() => {
+                  const vEl = vSrc.videoElement;
+                  if (!vEl) return;
                   vEl.currentTime = (vSrc.trimStart ?? 0) * (vEl.duration || 0);
                   vEl.play(); vSrc.isPlaying = true;
                   project.updateLayer(layer.id, {});

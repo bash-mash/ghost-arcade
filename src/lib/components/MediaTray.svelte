@@ -1760,7 +1760,18 @@
           // racing 4+ in-flight loads on rapid back-and-forth and stuck
           // textures on garbage frames. Reusing makes apply-A → apply-B
           // → apply-A a near-instant texture swap.
-          const video = item.videoElement;
+          // If another layer is already showing this clip, give this layer
+          // its own element; sharing one would tie their play/pause, mute
+          // and volume together (and the restart below would rewind both).
+          const usedByOtherLayer = $project.layers.some(
+            (l) => l.id !== layerId && l.source?.videoElement === item.videoElement
+          );
+          let video = item.videoElement;
+          if (usedByOtherLayer) {
+            video = document.createElement('video');
+            video.crossOrigin = item.videoElement.crossOrigin;
+            video.src = item.videoElement.currentSrc || item.videoElement.src || item.src;
+          }
           // Pause whatever video was previously bound to this layer so
           // it doesn't keep decoding in the background. The decoder
           // budget is shared across all <video> elements; a stack of
