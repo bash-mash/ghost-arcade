@@ -233,6 +233,9 @@ export interface UISettings {
   fluidQuality: FluidQualityMode;
   shaderQuality: ShaderQualityMode;
   gridSettings: GridSettings;
+  /** Show each output Screen's outline + name on the editor canvas while
+   *  working on layers (editor-only overlay, never in the output). */
+  showScreenOutlines: boolean;
   /** VJ layout: false = controls left (default), true = controls right */
   vjLayoutReversed: boolean;
   /**
@@ -933,6 +936,7 @@ function createDefaultSettings(): AppSettings {
       colorScheme: 'midnight-coral', // Default to new dark coral theme
       fluidQuality: 'live',
       shaderQuality: 'full',
+      showScreenOutlines: true,
       gridSettings: {
         enabled: false,
         columns: 12,
@@ -1484,6 +1488,17 @@ function createSettingsStore() {
         const newSettings = {
           ...s,
           ui: { ...s.ui, shaderQuality: mode }
+        };
+        saveSettings(newSettings);
+        return newSettings;
+      });
+    },
+
+    toggleScreenOutlines() {
+      update(s => {
+        const newSettings = {
+          ...s,
+          ui: { ...s.ui, showScreenOutlines: !(s.ui.showScreenOutlines ?? true) }
         };
         saveSettings(newSettings);
         return newSettings;

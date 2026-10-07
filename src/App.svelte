@@ -12,6 +12,8 @@
   import WarpHandles from './lib/components/WarpHandles.svelte';
   import MeshWarpHandles from './lib/components/MeshWarpHandles.svelte';
   import ScreenWarpHandles from './lib/components/ScreenWarpHandles.svelte';
+  import ScreenOutlinesOverlay from './lib/components/ScreenOutlinesOverlay.svelte';
+  import { screens } from './lib/stores/screens';
   import MasterWarpHandles from './lib/components/MasterWarpHandles.svelte';
   import Object3DTransformGizmo from './lib/components/Object3DTransformGizmo.svelte';
   import CustomShapeHandles from './lib/components/CustomShapeHandles.svelte';
@@ -5900,6 +5902,14 @@
              normalized 0..1 master-canvas coords map onto pixel coords
              identically. Hides layer warp handles below when active so
              the two overlays don't compete visually. -->
+        <!-- Read-only screen outlines while working on layers, so the
+             split between projectors stays visible. Editor-only overlay;
+             output windows never render it. -->
+        {#if $leftSidebarTab !== 'screens' && ($settings.ui.showScreenOutlines ?? true)}
+          <div class="warp-handles-offset" style="left: {canvasOffsetX}px; top: {canvasOffsetY}px;">
+            <ScreenOutlinesOverlay containerWidth={canvasWidth} containerHeight={canvasHeight} />
+          </div>
+        {/if}
         {#if $leftSidebarTab === 'screens'}
           <div class="warp-handles-offset" style="left: {canvasOffsetX}px; top: {canvasOffsetY}px;">
             <ScreenWarpHandles containerWidth={canvasWidth} containerHeight={canvasHeight} zoom={viewportZoom} />
@@ -6769,6 +6779,20 @@
           </svg>
           Grid
         </button>
+        {#if $screens.some((s) => s.enabled)}
+          <button
+            class="status-pill map-tool-pill"
+            class:on={$settings.ui.showScreenOutlines ?? true}
+            onclick={() => settings.toggleScreenOutlines()}
+            title="Show output screen outlines on the canvas (editor only, not sent to the projectors)"
+          >
+            <svg class="status-pill-icon" width="15" height="15" viewBox="0 0 24 24" aria-hidden="true">
+              <path class="ga-neon-stroke ga-neon-thin" d="M3 5h18v14H3z"/>
+              <path class="ga-neon-stroke" d="M12 5v14"/>
+            </svg>
+            Screens
+          </button>
+        {/if}
         {#if $settings.ui.gridSettings?.enabled}
           <select
             class="status-grid-select"
