@@ -14,6 +14,7 @@
   import ScreenWarpHandles from './lib/components/ScreenWarpHandles.svelte';
   import ScreenOutlinesOverlay from './lib/components/ScreenOutlinesOverlay.svelte';
   import { screens } from './lib/stores/screens';
+  import { openAllScreens, closeAllScreens, openScreenWindowIds, refreshOpenScreenWindows } from './lib/output/screenWindows';
   import MasterWarpHandles from './lib/components/MasterWarpHandles.svelte';
   import Object3DTransformGizmo from './lib/components/Object3DTransformGizmo.svelte';
   import CustomShapeHandles from './lib/components/CustomShapeHandles.svelte';
@@ -3812,6 +3813,12 @@
   let outputMode: 'embedded' | 'window' | 'fullscreen' = 'embedded';
 
   function openOutputWindow() {
+    // With Screens live on the projectors, a whole-canvas preview window
+    // on top would just cover one of them.
+    if ($openScreenWindowIds.length > 0) {
+      showToast('Projectors are already live via Fullscreen. Press Fullscreen again to close them.', 'info');
+      return;
+    }
     outputMode = 'window';
     // Already attached (e.g. after an editor reload) — don't re-open the
     // 'ga-output' window; that reloads it and re-handshakes. Just resync
@@ -3852,6 +3859,33 @@
   }
 
   async function toggleFullscreen() {
+    // Smart Fullscreen: with output Screens set up, open every enabled
+    // Screen on its projector (auto-assigning displays left→right) instead
+    // of sending the whole canvas to one display — and without resetting
+    // the project canvas to a single projector's resolution.
+    if (isDesktopApp && $screens.some((s) => s.enabled)) {
+      await refreshOpenScreenWindows();
+      if ($openScreenWindowIds.length > 0) {
+        await closeAllScreens();
+        outputMode = 'embedded';
+        return;
+      }
+      if (outputIsOpen || isOutputAttached()) {
+        outputWindow?.close();
+        outputIsOpen = false;
+        settings.setOutputWindowOpen(false);
+        await new Promise((resolve) => setTimeout(resolve, 120));
+      }
+      const { opened, unassigned } = await openAllScreens();
+      if (opened === 0) {
+        showToast('Connect a projector and pick it for a screen in the Screens tab.', 'info');
+      } else if (unassigned > 0) {
+        showToast(`${unassigned} screen(s) have no projector. Set them in the Screens tab.`, 'info');
+      }
+      outputMode = opened > 0 ? 'fullscreen' : 'embedded';
+      return;
+    }
+
     const status = outputWindow ? await outputWindow.getStatus() : null;
     if (outputMode === 'fullscreen' || (status?.exists && status.isExternal)) {
       // Close the dedicated projector/external fullscreen output.
@@ -5554,10 +5588,13 @@
         </button>
         <button
           class="output-btn"
-          class:active={outputMode === 'fullscreen'}
+          class:active={outputMode === 'fullscreen' || $openScreenWindowIds.length > 0}
           onclick={toggleFullscreen}
+          title={$screens.some((s) => s.enabled)
+            ? 'Screens set up: opens each screen on its projector (click again to close)'
+            : 'Fullscreen output on an external display'}
         >
-          Fullscreen
+          Fullscreen{$openScreenWindowIds.length > 0 ? ` (${$openScreenWindowIds.length})` : ''}
         </button>
         <button
           class="output-btn sim-launch-btn stage-sim-btn"

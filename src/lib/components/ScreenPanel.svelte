@@ -11,7 +11,11 @@
   import { screens, selectedScreenId, selectedScreen, screenActions } from '../stores/screens';
   import { settings, identityOutputMesh, masterWarpIsActive, type OutputSettings, type OutputSlice } from '../stores/settings';
   import { maxOutputSlices } from '../stores/license';
-  import { isDesktopApp, getTextureShareLabel, invoke } from '$lib/bridge';
+  import { isDesktopApp, getTextureShareLabel } from '$lib/bridge';
+  import {
+    getDisplays, refreshOpenScreenWindows, openScreenWindowIds, openScreenOnDisplay,
+    closeScreenOnDisplay, setMasterCanvas, computeMasterCanvasSize, type DisplayInfo,
+  } from '$lib/output/screenWindows';
   import OutputCanvasPreview from './OutputCanvasPreview.svelte';
   import ScreenInspector from './ScreenInspector.svelte';
 
@@ -19,126 +23,24 @@
 
   // ─── Display enumeration ─────────────────────────────────────────────
   // Re-fetched each time the panel mounts (operators hot-plug projectors).
-  type DisplayInfo = {
-    id: number; label: string; width: number; height: number;
-    x: number; y: number; isPrimary: boolean; scaleFactor: number;
-  };
   let displays: DisplayInfo[] = [];
   async function refreshDisplays() {
-    if (!isDesktopApp) return;
-    try {
-      displays = ((await invoke('get_displays')) as DisplayInfo[]) || [];
-    } catch { displays = []; }
+    displays = await getDisplays();
   }
   onMount(() => { refreshDisplays(); });
 
   // ─── Open-on-display window tracking ────────────────────────────────
-  let openWindowIds: string[] = [];
-  async function refreshOpenWindows() {
-    if (!isDesktopApp) return;
-    try {
-      const ids = (await invoke('output_list_slice_windows')) as string[];
-      openWindowIds = Array.isArray(ids) ? ids : [];
-    } catch { openWindowIds = []; }
-  }
-  onMount(() => { refreshOpenWindows(); });
-
-  // Auto-close any windows whose backing screen got removed/disabled/retargeted.
-  $: if (isDesktopApp && openWindowIds.length > 0) {
-    const live = $screens
-      .filter(s => s.enabled && (s.targetType ?? 'sender') === 'display' && s.displayId != null)
-      .map(s => s.id);
-    const stale = openWindowIds.filter(id => !live.includes(id));
-    if (stale.length > 0) {
-      Promise.all(stale.map(id => invoke('output_close_slice_window', { sliceId: id }).catch(() => {})))
-        .then(() => refreshOpenWindows());
-    }
-  }
-
-  // Track slice windows opened via window.open (zero-copy path) so we
-  // can close them locally without the editor losing the reference.
-  const _zeroCopySliceWindows = new Map<string, Window>();
-
-  async function openOnDisplay(s: OutputSlice) {
-    if (!isDesktopApp || s.displayId == null) return;
-    // Zero-copy path: open the slice window via window.open so it lives
-    // in the SAME renderer process as the editor. SliceOutputApp can
-    // then read the editor's already-warped presentCanvas via
-    // window.opener.document and crop its region from that — no local
-    // re-render, no fragile hidden-canvas → texture upload. Master warp
-    // applies on the slice display automatically because the source is
-    // the editor's WGSL-warped canvas.
-    const zeroCopy = !!$settings.experimental?.outputZeroCopy;
-    if (zeroCopy) {
-      try {
-        await invoke('configure_next_output_window', {
-          displayId: s.displayId,
-          fullscreen: true,
-        });
-        const url = new URL(window.location.href);
-        url.search = `?mode=slice-display&sliceId=${encodeURIComponent(s.id)}&webgpu-disable=1`;
-        const newWin = window.open(url.toString(), `ga-slice-${s.id}`, 'popup=true');
-        if (!newWin) {
-          alert('Slice display window failed to open. Check popup-blocker behaviour.');
-          return;
-        }
-        _zeroCopySliceWindows.set(s.id, newWin);
-        // Attach this slice window as an additional output target. The
-        // editor's pump fan-outs each VideoFrame to all attached ports —
-        // Fullscreen and slices can coexist. The slice window receives the
-        // same warped frame and crops its own region from it.
-        const { attachOutputWindow } = await import('$lib/sync/outputSharedTexturePresenter');
-        attachOutputWindow(newWin, `slice:${s.id}`);
-        console.log(`[ScreenPanel] slice ${s.id} opened on display ${s.displayId} [zero-copy]`);
-        refreshOpenWindows();
-        return;
-      } catch (err) {
-        console.error('[ScreenPanel] zero-copy open failed, falling back to IPC path:', err);
-        // fall through to legacy IPC
-      }
-    }
-    await invoke('output_open_slice_window', { sliceId: s.id, displayId: s.displayId }).catch(() => {});
-    refreshOpenWindows();
-  }
-  async function closeOnDisplay(s: OutputSlice) {
-    if (!isDesktopApp) return;
-    // Close the zero-copy window proxy locally first if we opened it
-    // via window.open. Electron's did-create-window listener also tracks
-    // it in `sliceWindows`, so the editor's `output_close_slice_window`
-    // IPC also closes it as a belt-and-suspenders. Either path works.
-    const zc = _zeroCopySliceWindows.get(s.id);
-    if (zc && !zc.closed) {
-      try { zc.close(); } catch { /* */ }
-      _zeroCopySliceWindows.delete(s.id);
-    }
-    // Detach from the presenter so the pump stops fan-out to a dead port.
-    try {
-      const { detachOutputWindow } = await import('$lib/sync/outputSharedTexturePresenter');
-      detachOutputWindow(`slice:${s.id}`);
-    } catch { /* */ }
-    await invoke('output_close_slice_window', { sliceId: s.id }).catch(() => {});
-    refreshOpenWindows();
-  }
+  // Shared with the toolbar Fullscreen button (see $lib/output/screenWindows).
+  $: openWindowIds = $openScreenWindowIds;
+  onMount(() => { refreshOpenScreenWindows(); });
+  const openOnDisplay = openScreenOnDisplay;
+  const closeOnDisplay = closeScreenOnDisplay;
 
   // ─── Master-canvas helpers ──────────────────────────────────────────
-  function setMaster(w: number, h: number) {
-    const W = Math.max(128, Math.min(15360, Math.round(w)));
-    const H = Math.max(128, Math.min(15360, Math.round(h)));
-    settings.update(s => ({ ...s, output: { ...s.output, masterCanvasWidth: W, masterCanvasHeight: H } }));
-  }
+  const setMaster = setMasterCanvas;
   function autoFitMaster() {
-    const active = $screens.filter(s => s.enabled && s.targetType === 'display' && s.displayId != null);
-    if (active.length === 0) return;
-    let totalW = 0, maxH = 0;
-    for (const s of active) {
-      const d = displays.find(dd => dd.id === s.displayId);
-      if (!d) continue;
-      const dw = d.width * d.scaleFactor;
-      const dh = d.height * d.scaleFactor;
-      totalW += dw - dw * (s.edgeBlendLeft + s.edgeBlendRight) / 2;
-      maxH = Math.max(maxH, dh);
-    }
-    if (totalW > 0 && maxH > 0) setMaster(totalW, maxH);
+    const size = computeMasterCanvasSize($screens, displays);
+    if (size) setMaster(size.width, size.height);
   }
   function matchSpoutToMaster() {
     settings.update(s => ({
