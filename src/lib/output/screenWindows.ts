@@ -105,6 +105,9 @@ export async function closeScreenOnDisplay(s: Pick<OutputSlice, 'id'>): Promise<
 
 // Auto-close any windows whose backing screen got removed/disabled/retargeted.
 if (isDesktopApp) {
+  // Screen windows can be closed from their own side (Esc), which sends no
+  // event here — resync when the editor regains focus.
+  window.addEventListener('focus', () => { void refreshOpenScreenWindows(); });
   let closingStale = false;
   const closeStale = () => {
     const open = get(openScreenWindowIds);
@@ -141,12 +144,15 @@ export async function openAllScreens(): Promise<{ opened: number; unassigned: nu
   if (!isDesktopApp) return { opened: 0, unassigned: 0 };
   const displays = await getDisplays();
 
-  for (const [id, displayId] of planScreenDisplayAssignments(get(screens), displays)) {
+  const keepSenders = !!get(settings).output?.spoutEnabled;
+  for (const [id, displayId] of planScreenDisplayAssignments(get(screens), displays, { keepSenders })) {
     screenActions.update(id, { targetType: 'display', displayId });
   }
 
   const ready = get(screens).filter(s => s.enabled && s.targetType === 'display' && s.displayId != null);
-  const unassigned = get(screens).filter(s => s.enabled).length - ready.length;
+  const unassigned = get(screens).filter(s =>
+    s.enabled && (s.targetType === 'display' ? s.displayId == null : !keepSenders)
+  ).length;
 
   const size = computeMasterCanvasSize(get(screens), displays);
   if (size) {

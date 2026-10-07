@@ -43,6 +43,15 @@ describe('planScreenDisplayAssignments', () => {
     expect([...plan]).toEqual([['a', 2]]);
   });
 
+  it('leaves sender screens alone when keepSenders is set (Spout output on)', () => {
+    const plan = planScreenDisplayAssignments(
+      [screen('spout', 0), screen('proj', 0.5, { targetType: 'display', displayId: null })],
+      [laptop, display(2, 1512), display(3, 3432)],
+      { keepSenders: true },
+    );
+    expect([...plan]).toEqual([['proj', 2]]);
+  });
+
   it('skips disabled screens and falls back to the primary display when it is the only one', () => {
     const plan = planScreenDisplayAssignments(
       [screen('off', 0, { enabled: false }), screen('on', 0.5)],

@@ -33,10 +33,12 @@ export function computeMasterCanvasSize(
  *  left→right: screens by their slice position, displays by their
  *  desktop position. Existing assignments are kept. Prefers external
  *  (non-primary) displays; falls back to all displays when there are
- *  none. Returns screenId → displayId for the screens it assigned. */
+ *  none. With keepSenders, screens routed to a Spout/NDI sender are
+ *  left alone. Returns screenId → displayId for the screens it assigned. */
 export function planScreenDisplayAssignments(
   screenList: OutputSlice[],
   displays: DisplayInfo[],
+  options: { keepSenders?: boolean } = {},
 ): Map<string, number> {
   const enabled = screenList.filter(s => s.enabled);
   const external = displays.filter(d => !d.isPrimary);
@@ -49,8 +51,12 @@ export function planScreenDisplayAssignments(
       .map(s => s.displayId as number),
   );
   const free = candidates.filter(d => !taken.has(d.id));
+  // keepSenders: Spout/NDI output is on, so screens set to "sender" are
+  // deliberate — only fill in displays for screens already targeting one.
   const unassigned = enabled
-    .filter(s => s.targetType !== 'display' || s.displayId == null)
+    .filter(s => s.targetType === 'display'
+      ? s.displayId == null
+      : !options.keepSenders)
     .sort((a, b) => a.cropX - b.cropX || a.cropY - b.cropY);
 
   const plan = new Map<string, number>();

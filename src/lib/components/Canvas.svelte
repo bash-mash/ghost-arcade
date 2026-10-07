@@ -3274,6 +3274,8 @@
   const dedicatedVideos = new Map<string, HTMLVideoElement>();
   // Last restartToken applied to each <video> (see source.restartToken).
   const seenRestartTokens = new WeakMap<HTMLVideoElement, number>();
+  // Mapping layer id -> the <video> it showed on the last full pass.
+  const lastLayerVideos = new Map<string, HTMLVideoElement>();
 
   function releaseVideoElement(v: HTMLVideoElement) {
     try {
@@ -3319,6 +3321,9 @@
     const currentLayerIds = new Set<string>();
     const nextAudibleVideos = new Set<HTMLVideoElement>();
     const claimedVideos = new Map<HTMLVideoElement, string>();
+    const hiddenGroupIds = new Set(
+      layerList.filter((l) => l.type === 'group' && l.visible === false).map((l) => l.id)
+    );
 
     for (const layer of layerList) {
       currentLayerIds.add(layer.id);
@@ -3373,6 +3378,7 @@
       // and volume stay independent when two layers show the same clip.
       if (layer.source.type === 'video' && !isVJVideoLayer) {
         ensureOwnVideoElement(layer, claimedVideos);
+        if (layer.source.videoElement) lastLayerVideos.set(layer.id, layer.source.videoElement);
       }
       const textureCacheKey =
         isAIGenerated || isSynthVision
@@ -3541,13 +3547,17 @@
 
         // Soundtrack: every video element is created muted; unmute here for
         // visible layers in the editor window unless the layer is muted.
+        // VJ deck clips are left alone (their A/B decks would otherwise
+        // play over each other).
         if (
           video &&
           playVideoAudio &&
           !isOutputMode &&
           !isOsrMode &&
+          !isVJVideoLayer &&
           layer.source.audioEnabled !== false &&
           layer.visible !== false &&
+          !(layer.parentGroupId && hiddenGroupIds.has(layer.parentGroupId)) &&
           (layer.opacity ?? 1) > 0
         ) {
           const volume = Math.max(0, Math.min(1, layer.source.volume ?? 1));
@@ -3680,6 +3690,15 @@
         dedicatedVideos.delete(layerId);
       }
     }
+    // A deleted (or no longer rendered) mapping layer's <video> would keep
+    // decoding in the background. Pause it unless another layer still uses
+    // it; the per-frame play-state sync resumes it if the layer returns.
+    for (const [layerId, v] of lastLayerVideos) {
+      if (!currentLayerIds.has(layerId)) {
+        if (!claimedVideos.has(v) && !v.paused) v.pause();
+        lastLayerVideos.delete(layerId);
+      }
+    }
     for (const [layerId, src] of activeLayerSources.entries()) {
       if (!currentLayerIds.has(layerId)) {
         cleanupLayerShader(layerId, src);
@@ -3747,6 +3766,7 @@
       } else if (source.type === 'video') {
         // Get video element - either from source or create a new one
         let video = source.videoElement;
+        const hadVideoElement = !!video;
 
         // If no video element exists, create one
         if (!video) {
@@ -3813,8 +3833,12 @@
           });
         }
 
-        // Ensure video is playing
-        if (video.paused) {
+        // Ensure video is playing — unless the user paused this layer and
+        // we're only rebuilding its texture. Mark the intent first so the
+        // per-frame play-state sync doesn't pause it while it starts.
+        const keepPaused = hadVideoElement && source.isPlaying === false;
+        if (video.paused && !keepPaused) {
+          source.isPlaying = true;
           try {
             await video.play();
           } catch (e) {
@@ -3826,7 +3850,7 @@
         await new Promise((resolve) => requestAnimationFrame(resolve));
 
         texture = createVideoTexture(video);
-        source.isPlaying = !video.paused;
+        source.isPlaying = keepPaused ? false : !video.paused;
       } else if (source.type === 'shader' && source.shaderCode) {
         // Create ISF shader instance
         console.log('Creating ISF shader for layer:', layerId, 'shader:', source.name);

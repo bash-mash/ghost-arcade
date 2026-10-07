@@ -70,6 +70,7 @@
   import UpdateModal from './lib/components/UpdateModal.svelte';
   import { updateModalOpen, leftSidebarTab } from './lib/stores/uiState';
   import { showToast } from './lib/stores/errorToast';
+  import { getLastProject, clearLastProject, projectFingerprint } from './lib/project/sessionRestore';
   import { project, selectedLayer, selectedLayerIds, selectedLinesLayer, selectedLineElement, selectedLightPaintingLayer, selectedAdvLightPaintingLayer, selectedTextLayer, selectedSVGLayer, selectedMediaLayer, selectedSplatLayer, selectedModel3DLayer, selectedPixelFXLayer, selectedGPULayer, selectedGroupLayer, setHistoryCallback } from './lib/stores/layers';
   import { keyframeTimeline } from './lib/stores/keyframeTimeline';
   import { layerSequencer } from './lib/stores/layerSequencer';
@@ -437,6 +438,10 @@
   let autosaveInterval: ReturnType<typeof setInterval> | null = null;
   let showRecoveryModal = false;
   let recoveryTimestamp = '';
+  let recoveryProjectName = '';
+  // Fingerprint of the project as last saved/loaded; the autosave only
+  // keeps a copy when the live project differs from it.
+  let lastSavedFingerprint: string | null = null;
 
   // Track project changes to detect unsaved state
   $: {
@@ -456,6 +461,11 @@
     });
     lastSavedState = currentState;
     hasUnsavedChanges = false;
+    try {
+      lastSavedFingerprint = projectFingerprint(project.exportProjectJSON());
+    } catch {
+      lastSavedFingerprint = null;
+    }
   }
 
   // Auto-save cleanup
@@ -472,24 +482,47 @@
   // Recovery modal actions
   function recoverAutosave() {
     const savedData = localStorage.getItem('ghostarcade-autosave');
+    const savedPath = localStorage.getItem('ghostarcade-autosave-path');
     if (savedData) {
-      project.importProjectJSON(savedData);
-      markAsSaved();
+      const sep = savedPath?.includes('\\') ? '\\' : '/';
+      const projectDir = savedPath ? savedPath.substring(0, savedPath.lastIndexOf(sep) + 1) : undefined;
+      if (!project.importProjectJSON(savedData, projectDir)) {
+        // Keep the backup so nothing is lost; the user can still Discard.
+        showToast('Could not recover the unsaved changes — the backup looks damaged.', 'error');
+        return;
+      }
+      // Save (Ctrl+S) should update the file these changes belong to.
+      // Not marked as saved — the recovered edits still need saving.
+      currentFileHandle = null;
+      currentProjectPath = savedPath || null;
     }
-    localStorage.removeItem('ghostarcade-autosave');
-    localStorage.removeItem('ghostarcade-autosave-timestamp');
+    clearAutosave();
     showRecoveryModal = false;
   }
 
   function discardAutosave() {
-    localStorage.removeItem('ghostarcade-autosave');
-    localStorage.removeItem('ghostarcade-autosave-timestamp');
+    clearAutosave();
     showRecoveryModal = false;
+    void openLastProject();
   }
 
   function clearAutosave() {
     localStorage.removeItem('ghostarcade-autosave');
     localStorage.removeItem('ghostarcade-autosave-timestamp');
+    localStorage.removeItem('ghostarcade-autosave-path');
+    localStorage.removeItem('ghostarcade-autosave-name');
+  }
+
+  /** Reopen the project from the previous session (desktop only). A
+   *  missing/broken file just leaves an empty project with a notice. */
+  async function openLastProject() {
+    const last = getLastProject();
+    if (!isDesktopApp || !last) return;
+    const ok = await loadProjectFromPath(last.name, last.path, { quiet: true });
+    if (!ok) {
+      clearLastProject();
+      showToast(`Couldn't reopen "${last.name}" — the file was moved or can't be read.`, 'info');
+    }
   }
 
   // Close modal actions
@@ -989,11 +1022,16 @@
     markAsSaved();
 
     // --- Crash recovery: check for auto-saved project ---
+    // The autosave only exists when the last session ended with unsaved
+    // edits; otherwise reopen the last project straight away.
     const savedAutosave = localStorage.getItem('ghostarcade-autosave');
     if (savedAutosave) {
       const ts = localStorage.getItem('ghostarcade-autosave-timestamp');
       recoveryTimestamp = ts ? new Date(parseInt(ts, 10)).toLocaleString() : 'unknown time';
+      recoveryProjectName = localStorage.getItem('ghostarcade-autosave-name') || '';
       showRecoveryModal = true;
+    } else {
+      void openLastProject();
     }
 
     // --- Auto-save interval: every 30 seconds ---
@@ -1002,8 +1040,22 @@
       if (proj.layers.length > 0) {
         try {
           const jsonStr = project.exportProjectJSON();
+          // Nothing changed since the last save/load: no recovery copy needed
+          // (otherwise the recover prompt would appear on every launch).
+          if (lastSavedFingerprint !== null && projectFingerprint(jsonStr) === lastSavedFingerprint) {
+            clearAutosave();
+            return;
+          }
           localStorage.setItem('ghostarcade-autosave', jsonStr);
           localStorage.setItem('ghostarcade-autosave-timestamp', Date.now().toString());
+          if (currentProjectPath) {
+            const sep = currentProjectPath.includes('\\') ? '\\' : '/';
+            localStorage.setItem('ghostarcade-autosave-path', currentProjectPath);
+            localStorage.setItem('ghostarcade-autosave-name', currentProjectPath.split(sep).pop() || '');
+          } else {
+            localStorage.removeItem('ghostarcade-autosave-path');
+            localStorage.removeItem('ghostarcade-autosave-name');
+          }
         } catch (e) {
           console.warn('[AutoSave] Failed to auto-save project:', e);
         }
@@ -3816,7 +3868,7 @@
     // With Screens live on the projectors, a whole-canvas preview window
     // on top would just cover one of them.
     if ($openScreenWindowIds.length > 0) {
-      showToast('Projectors are already live via Fullscreen. Press Fullscreen again to close them.', 'info');
+      showToast('Projectors are already live. Close them with Fullscreen or in the Screens tab.', 'info');
       return;
     }
     outputMode = 'window';
@@ -3863,16 +3915,19 @@
     // Screen on its projector (auto-assigning displays left→right) instead
     // of sending the whole canvas to one display — and without resetting
     // the project canvas to a single projector's resolution.
-    if (isDesktopApp && $screens.some((s) => s.enabled)) {
+    // With Spout output on, screens left as senders are deliberate; only
+    // take over when some screen is (or can be) routed to a display.
+    const spoutOn = !!$settings.output?.spoutEnabled;
+    if (isDesktopApp && $screens.some((s) => s.enabled && (!spoutOn || s.targetType === 'display'))) {
       await refreshOpenScreenWindows();
       if ($openScreenWindowIds.length > 0) {
         await closeAllScreens();
-        outputMode = 'embedded';
         return;
       }
       if (outputIsOpen || isOutputAttached()) {
         outputWindow?.close();
         outputIsOpen = false;
+        outputMode = 'embedded';
         settings.setOutputWindowOpen(false);
         await new Promise((resolve) => setTimeout(resolve, 120));
       }
@@ -3882,7 +3937,8 @@
       } else if (unassigned > 0) {
         showToast(`${unassigned} screen(s) have no projector. Set them in the Screens tab.`, 'info');
       }
-      outputMode = opened > 0 ? 'fullscreen' : 'embedded';
+      // Live state is tracked by $openScreenWindowIds, not outputMode
+      // (which describes the single whole-canvas output window).
       return;
     }
 
@@ -4450,6 +4506,7 @@
     // Also clear the Electron path so Save doesn't accidentally overwrite
     // the previously-loaded .gha with a fresh empty project.
     currentProjectPath = null;
+    clearLastProject();
     history.clear();
     markAsSaved();
     clearAutosave();
@@ -4466,39 +4523,52 @@
 
     // Electron: read the file directly from disk via IPC
     if (isDesktopApp && entry.path) {
-      try {
-        const { invoke } = await import('$lib/bridge');
-        const result = await invoke<{ content: string; dir: string }>('read_project_file', { path: entry.path });
-        try { synthVisionStore.reset(); } catch {}
-        try { sessionClipCache.clear(); } catch {}
-        try { isfShaderCache.clear(); } catch {}
-        try { modulationStore.clearAll(); } catch {}
-        const success = project.importProjectJSON(result.content, result.dir);
-        if (success) {
-          console.log('Project loaded from recent:', entry.path);
-          currentFileHandle = null;
-          // Track the loaded path so Save updates this file in place.
-          currentProjectPath = entry.path;
-          recentFiles.add(entry.name, entry.path); // Bump to top
-          markAsSaved();
-          return;
-        }
-        alert('Failed to load project. The file may be corrupted or invalid.');
-      } catch (err: any) {
-        const missing = /not found|ENOENT/i.test(err?.message || '');
-        if (missing) {
-          if (confirm(`"${entry.name}" could not be found.\n\nRemove it from Recent Files?`)) {
-            recentFiles.remove(entry);
-          }
-        } else {
-          alert(`Failed to open recent file: ${err?.message || err}`);
-        }
-      }
+      await loadProjectFromPath(entry.name, entry.path, { quiet: false, recentEntry: entry });
       return;
     }
 
     // Web / no path: fall back to the file picker
     loadComposition();
+  }
+
+  /** Load a .gha from disk (desktop). Shared by Open Recent and the
+   *  startup reopen; `quiet` suppresses the blocking error dialogs. */
+  async function loadProjectFromPath(
+    name: string,
+    path: string,
+    opts: { quiet: boolean; recentEntry?: { name: string; path: string | null; timestamp: number } },
+  ): Promise<boolean> {
+    try {
+      const { invoke } = await import('$lib/bridge');
+      const result = await invoke<{ content: string; dir: string }>('read_project_file', { path });
+      try { synthVisionStore.reset(); } catch {}
+      try { sessionClipCache.clear(); } catch {}
+      try { isfShaderCache.clear(); } catch {}
+      try { modulationStore.clearAll(); } catch {}
+      const success = project.importProjectJSON(result.content, result.dir);
+      if (success) {
+        console.log('Project loaded from disk:', path);
+        currentFileHandle = null;
+        // Track the loaded path so Save updates this file in place.
+        currentProjectPath = path;
+        recentFiles.add(name, path); // Bump to top
+        markAsSaved();
+        return true;
+      }
+      if (!opts.quiet) alert('Failed to load project. The file may be corrupted or invalid.');
+    } catch (err: any) {
+      if (!opts.quiet) {
+        const missing = /not found|ENOENT/i.test(err?.message || '');
+        if (missing) {
+          if (opts.recentEntry && confirm(`"${name}" could not be found.\n\nRemove it from Recent Files?`)) {
+            recentFiles.remove(opts.recentEntry);
+          }
+        } else {
+          alert(`Failed to open recent file: ${err?.message || err}`);
+        }
+      }
+    }
+    return false;
   }
 
   // =========================================================================
@@ -7006,7 +7076,9 @@
 
 <!-- Crash Recovery Modal -->
 {#if showRecoveryModal}
-  <div class="close-modal-backdrop" onclick={discardAutosave}>
+  <!-- No backdrop-click dismiss: Discard throws away unsaved work, so it
+       has to be an explicit button press. -->
+  <div class="close-modal-backdrop">
     <div class="close-modal" onclick={(e) => e.stopPropagation()}>
       <div class="close-modal-icon">
         <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="#4ecdc4" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
@@ -7015,7 +7087,13 @@
         </svg>
       </div>
       <h2 class="close-modal-title">Recover Unsaved Project?</h2>
-      <p class="close-modal-desc">An auto-saved project was found from {recoveryTimestamp}. Would you like to recover it?</p>
+      <p class="close-modal-desc">
+        {#if recoveryProjectName}
+          "{recoveryProjectName}" has unsaved changes from {recoveryTimestamp}. Recover them, or discard and open the last saved version?
+        {:else}
+          An auto-saved project was found from {recoveryTimestamp}. Would you like to recover it?
+        {/if}
+      </p>
       <div class="close-modal-actions">
         <button class="close-modal-btn btn-recover" onclick={recoverAutosave}>
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">

@@ -1,6 +1,7 @@
 // Recent files tracking — persisted in localStorage.
 // Shows up to MAX_RECENT entries in the File menu for quick reopening.
 import { writable } from 'svelte/store';
+import { setLastProject } from '../project/sessionRestore';
 
 export interface RecentFile {
   name: string;
@@ -39,8 +40,10 @@ function createRecentFilesStore() {
   return {
     subscribe,
 
-    /** Record a file as recently opened/saved. Moves it to the top and dedupes by path (or by name if no path). */
+    /** Record a file as recently opened/saved. Moves it to the top and dedupes by path (or by name if no path).
+     *  Files with a disk path also become the project reopened on next launch. */
     add(name: string, path: string | null = null) {
+      if (path) setLastProject(name, path);
       update((files) => {
         // Dedupe by path if we have one, otherwise by name
         const dedupeKey = path || name;
