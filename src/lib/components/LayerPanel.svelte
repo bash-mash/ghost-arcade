@@ -1972,6 +1972,7 @@
                   if (!vEl) return;
                   vEl.currentTime = (vSrc.trimStart ?? 0) * (vEl.duration || 0);
                   vEl.play(); vSrc.isPlaying = true;
+                  vSrc.restartToken = (vSrc.restartToken ?? 0) + 1;
                   project.updateLayer(layer.id, {});
                 }}
                 title="Restart"

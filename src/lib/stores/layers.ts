@@ -4446,8 +4446,15 @@ void main() {
           trimEnd: (layer.source as any).trimEnd,
           timelapseInterval: layer.source.timelapseInterval,
           timelapseRunning: layer.source.timelapseRunning,
+          // Play state + restart token keep output windows that render
+          // their own copy of the video (fallback slice path) in step with
+          // the editor's play/pause/restart buttons.
+          isPlaying: layer.source.isPlaying,
+          restartToken: layer.source.restartToken,
+          audioEnabled: layer.source.audioEnabled,
+          volume: layer.source.volume,
           _assetRef: (layer.source as any)._assetRef,
-          // Exclude: texture, videoElement, isPlaying, iframeElement, threejsCanvas, synthVisionCanvas
+          // Exclude: texture, videoElement, iframeElement, threejsCanvas, synthVisionCanvas
         };
       }
 
@@ -5622,6 +5629,17 @@ void main() {
           catch (e) { console.warn('[Import] geoDeck restore failed:', e); }
         }
 
+        // Output windows re-import the whole project on every synced
+        // change. Rebuilding each layer's <video> then restarted playback
+        // (and leaked the old element), so keep the live element when the
+        // same layer still shows the same file.
+        const liveVideos = new Map<string, HTMLVideoElement>();
+        for (const l of get({ subscribe }).layers) {
+          if (l.source?.type === 'video' && l.source.videoElement) {
+            liveVideos.set(`${l.id}|${l.source.src}`, l.source.videoElement);
+          }
+        }
+
         // Reconstruct the project with proper defaults
         const importedProject: Project = {
           id: proj.id || generateUUID(),
@@ -5642,7 +5660,14 @@ void main() {
                 imported.source.src,
               );
               if (isVideoSource(imported.source)) {
-                rehydrateVideoSource(imported.source);
+                const live = liveVideos.get(`${imported.id}|${imported.source.src}`);
+                if (live) {
+                  imported.source.videoElement = live;
+                  // _importLayer resets isPlaying; keep the sender's state.
+                  imported.source.isPlaying = (layer as any).source?.isPlaying !== false;
+                } else {
+                  rehydrateVideoSource(imported.source);
+                }
               }
             }
             if (imported.splatContent) {

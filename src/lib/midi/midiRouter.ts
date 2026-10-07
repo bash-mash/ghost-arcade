@@ -248,7 +248,7 @@ class MidiRouter {
         else video.pause();
       } else if (property === 'restart' && value > 0) {
         video.currentTime = startTime;
-        project.setLayerSource(layer.id, { ...source, isPlaying: true });
+        project.setLayerSource(layer.id, { ...source, isPlaying: true, restartToken: (source.restartToken ?? 0) + 1 });
         void video.play().catch(() => undefined);
       } else if (property === 'position') {
         const normalized = Math.max(0, Math.min(1, value));

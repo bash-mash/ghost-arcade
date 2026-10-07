@@ -789,6 +789,7 @@ export interface MediaSource {
   trimEnd?: number; // 0-1 normalized end point (default 1)
   audioEnabled?: boolean; // Play the video's soundtrack from the editor window (default true; false = muted)
   volume?: number; // 0-1 soundtrack volume when audioEnabled (default 1)
+  restartToken?: number; // Bumped on Restart so synced output windows seek to the trim start too
   _lastFrameTime?: number; // Internal: timestamp for manual frame stepping
   // Timelapse mode properties
   timelapseInterval?: number; // Seconds between frames (1-30)

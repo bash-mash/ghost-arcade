@@ -3272,6 +3272,8 @@
   // layerId -> <video> element Canvas created for a layer whose clip was
   // already playing on another layer's element.
   const dedicatedVideos = new Map<string, HTMLVideoElement>();
+  // Last restartToken applied to each <video> (see source.restartToken).
+  const seenRestartTokens = new WeakMap<HTMLVideoElement, number>();
 
   function releaseVideoElement(v: HTMLVideoElement) {
     try {
@@ -3574,6 +3576,17 @@
           // Whether the user wants the video playing (UI toggle)
           const wantsPlaying = source.isPlaying !== false;
 
+          // Restart pressed (here or in the editor this window mirrors):
+          // seek back to the trim start once per token change.
+          const restartToken = source.restartToken ?? 0;
+          const seenToken = seenRestartTokens.get(video);
+          if (seenToken === undefined) {
+            seenRestartTokens.set(video, restartToken);
+          } else if (seenToken !== restartToken) {
+            seenRestartTokens.set(video, restartToken);
+            try { video.currentTime = trimStartTime; } catch { /* ignore */ }
+          }
+
           // Keep browser-native looping disabled. The shared controller owns
           // trim boundaries for VJ and mapping, even when this canvas is idle.
           syncTrimmedVideoPlayback(video, source);
@@ -3590,9 +3603,13 @@
             // Timelapse: video is paused, frame stepping is driven by a timer in MediaTray
             if (!video.paused) video.pause();
           } else if (mode === 'loop') {
-            // Loop with trim support — only auto-play if user hasn't paused
+            // Loop with trim support — only auto-play if user hasn't paused.
+            // Pause too, so the layer's play state drives output windows
+            // that run their own copy of the video.
             if (video.paused && wantsPlaying) {
               video.play().catch(() => {});
+            } else if (!video.paused && !wantsPlaying && !isVJVideoLayer) {
+              video.pause();
             }
           } else if (mode === 'once') {
             // Play once within trim region
@@ -3604,6 +3621,8 @@
               }
             } else if (video.paused && wantsPlaying) {
               video.play().catch(() => {});
+            } else if (!video.paused && !wantsPlaying && !isVJVideoLayer) {
+              video.pause();
             }
           }
         }

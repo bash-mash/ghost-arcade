@@ -69,7 +69,6 @@ function stripLayerSourceForSignature(source: any): any {
   const {
     texture: _texture,
     videoElement: _videoElement,
-    isPlaying: _isPlaying,
     synthVisionCanvas: _synthVisionCanvas,
     threejsCanvas: _threejsCanvas,
     iframeElement: _iframeElement,
