@@ -52,6 +52,11 @@ a Windows PC**, and distributes it to other Windows PCs via the installer below.
   project canvas to the rig) and closes them on the next click
   (`src/lib/output/screenWindows.ts`, pure helpers in `screenLayout.ts`).
   Output Window stays a single whole-canvas preview.
+- **Screen windows fill the display on Windows**: slice windows are created
+  `resizable: true` (non-resizable windows on Windows got a fixed max size of
+  1888×1064 on a 1920×1080 display, blocking fullscreen and leaving a gap at
+  the bottom/right), and `fitSliceWindowToDisplay` in `electron/main.js` snaps
+  them to their display and re-asserts fullscreen. Verified on the owner's PC.
 - **Reopen last project on startup** (`src/lib/project/sessionRestore.ts`):
   last opened/saved `.gha` reopens automatically; the crash autosave is only
   kept when there are real unsaved edits (fingerprint ignores play state), so
@@ -59,21 +64,24 @@ a Windows PC**, and distributes it to other Windows PCs via the installer below.
 - Project setup for two 1920×1200 projectors: Settings → Canvas → Resolution
   **3840×1200**, Screens tab → **2-Wide**, then Fullscreen.
 
-## Open issue (as of 2026-10-07)
-On the owner's **Windows PC**, after pressing Fullscreen with two screens,
-**imported videos freeze in the editor and on both projectors** (FX/shaders
-keep animating; play/pause doesn't help; MP4 files). Not reproducible on macOS
-in either output mode (zero-copy mirror or own-copy fallback) or after the
-canvas resize. Same freeze was seen with the old Output Window/Fullscreen, so
-it predates this fork's changes. Suspected: video-frame upload failing on that
-GPU setup (zero-copy output and/or hardware video decode across GPUs).
-Next steps given to the owner:
-1. Settings → GPU Acceleration → turn off **Zero-copy GPU output**, reopen
-   Fullscreen, test.
-2. If not fixed: launch with `--projection-safe-mode` (adds `disable-zero-copy`
-   in `electron/main.js`).
-3. Send the last ~50 lines of `%LOCALAPPDATA%\ghost-arcade-debug.log`.
-Whichever fixes it should become the automatic behaviour for that setup.
+- **Video freeze on Windows fixed** (2026-10-07): after Fullscreen opened the
+  screen windows, MP4 layers froze (audio + `currentTime` kept going but
+  `getVideoPlaybackQuality().totalVideoFrames` stopped; seek/play-pause didn't
+  recover). Cause: Chromium hardware (D3D11) video decode stalling — seen on
+  AMD and NVIDIA. `electron/main.js` now appends
+  `disable-accelerated-video-decode` on Windows (CPU decode). Verified on the
+  owner's PC by frame count. Not an issue on macOS.
+  What we learned trying to keep hardware decode (Electron 42): the media log
+  shows `DECODER_UNDERFLOW`; it's the screen windows' *rendering* that starves
+  the decoder (stopping their rAF restores it), in both zero-copy and legacy
+  output modes. No fix from: `D3D11VideoDecoderForceSingleTexture`,
+  `D3D11VideoDecoderUseSharedHandle`, `DedicatedMediaServiceThread`,
+  `DCompTripleBufferVideoSwapChain`, `--disable-gpu-vsync`, throttling slice
+  rAF. `D3D12VideoDecoder` *looks* fixed but fails to init (E_INVALIDARG) and
+  silently falls back to FFmpeg — always check `kVideoDecoderName` in the
+  media log. Retest D3D12 on future Electron upgrades.
+- Debugging tip: CDP `Runtime.queryObjects(HTMLVideoElement.prototype)` finds
+  the layer `<video>` elements (they're not in the DOM).
 
 ## Ideas parked for later
 - AI "ride" feature: phone photo (mobile companion) → video-to-video model puts

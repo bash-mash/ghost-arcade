@@ -58,6 +58,14 @@ if (PROJECTION_SAFE_MODE) {
     app.commandLine.appendSwitch('enable-hardware-overlays');
   }
 }
+// Windows: decode video on the CPU. With hardware (D3D11) decode, opening
+// the projector/screen windows stalls the decoder — video layers freeze on
+// their last frame while audio and the playback clock keep running (seen
+// on AMD and NVIDIA; seeking/play-pause don't recover it). CPU decode keeps
+// frames flowing.
+if (process.platform === 'win32') {
+  app.commandLine.appendSwitch('disable-accelerated-video-decode');
+}
 app.commandLine.appendSwitch('autoplay-policy', 'no-user-gesture-required');
 // Disable pinch-to-zoom at the browser level (we handle zoom ourselves)
 app.commandLine.appendSwitch('disable-pinch');
@@ -3468,6 +3476,7 @@ function registerIpcHandlers() {
       },
     });
     win.setMenuBarVisibility(false);
+    fitSliceWindowToDisplay(win);
 
     const devUrl = process.env.VITE_DEV_SERVER_URL || 'http://localhost:1420';
     const isDev = !app.isPackaged;
@@ -4939,7 +4948,10 @@ function createMainWindow() {
 
     // Slice windows are projector-targeted: borderless + always fullscreen
     // matches the legacy `output_open_slice_window` behaviour. Output
-    // windows keep the framed, resizable chrome for in-app preview.
+    // windows keep the framed chrome for in-app preview.
+    // Both stay resizable: on Windows a non-resizable window gets a fixed
+    // max size (computed minus frame insets, e.g. 1888×1064 on a 1920×1080
+    // display) that also blocks fullscreen, leaving a gap at the bottom/right.
     const isSliceWin = isSliceDisplay;
     return {
       action: 'allow',
@@ -4949,7 +4961,7 @@ function createMainWindow() {
         x: winX,
         y: winY,
         title: isSliceWin ? 'Ghost Arcade Output — slice' : 'Ghost Arcade Output',
-        resizable: !isSliceWin,
+        resizable: true,
         frame: !isSliceWin,
         fullscreen: isSliceWin ? true : fullscreen,
         simpleFullscreen: process.platform === 'darwin',
@@ -5001,6 +5013,7 @@ function createMainWindow() {
           }
           sliceWindows.set(sliceId, newWindow);
           installOutputEscapeHandler(newWindow, { closeOnEscape: true });
+          fitSliceWindowToDisplay(newWindow);
           newWindow.on('closed', () => {
             if (sliceWindows.get(sliceId) === newWindow) sliceWindows.delete(sliceId);
           });
@@ -5217,6 +5230,30 @@ function createProjectionSimWindow() {
   });
   projectionSimWindow.on('enter-full-screen', () => publishProjectionSimFullscreenState(true));
   projectionSimWindow.on('leave-full-screen', () => publishProjectionSimFullscreenState(false));
+}
+
+// Windows: a projector window created with x/y on another display can end
+// up a few pixels short of that display instead of truly fullscreen.
+// Snap it to the display it landed on and re-assert fullscreen, now and
+// again once the page has loaded as a safety net.
+function fitSliceWindowToDisplay(win) {
+  if (process.platform !== 'win32' || !win || win.isDestroyed()) return;
+  const fit = () => {
+    if (win.isDestroyed()) return;
+    try {
+      const { bounds } = screen.getDisplayMatching(win.getBounds());
+      const cur = win.getBounds();
+      const sized = cur.x === bounds.x && cur.y === bounds.y
+        && cur.width === bounds.width && cur.height === bounds.height;
+      if (sized && win.isFullScreen()) return;
+      if (!sized) win.setBounds(bounds);
+      win.setFullScreen(true);
+    } catch (err) {
+      console.warn('[Output] slice window fit failed:', err);
+    }
+  };
+  fit();
+  win.webContents.once('did-finish-load', fit);
 }
 
 function installOutputEscapeHandler(win, { closeOnEscape = false } = {}) {
